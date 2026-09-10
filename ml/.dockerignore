@@ -1,0 +1,8 @@
+__pycache__
+*.pyc
+.git
+models/*.h5
+models/*.pt
+models/*.pkl
+data/
+notebooks/

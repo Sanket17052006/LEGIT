@@ -1,0 +1,61 @@
+version: '3.8'
+
+services:
+  # Backend API
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: compliance-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+      - backend_uploads:/app/uploads
+    environment:
+      - DATABASE_URL=sqlite:///./compliance_checker.db
+      - SECRET_KEY=change-this-in-production
+      - UPLOAD_DIR=./uploads
+      - ML_SERVICE_URL=http://ml:8001
+    depends_on:
+      - ml
+    networks:
+      - compliance-net
+    restart: unless-stopped
+
+  # Frontend
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=http://localhost:8000
+    container_name: compliance-frontend
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    networks:
+      - compliance-net
+    restart: unless-stopped
+
+  # ML Service
+  ml:
+    build:
+      context: ./ml
+      dockerfile: Dockerfile
+    container_name: compliance-ml
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./ml:/app
+    networks:
+      - compliance-net
+    restart: unless-stopped
+
+volumes:
+  backend_uploads:
+
+networks:
+  compliance-net:
+    driver: bridge
