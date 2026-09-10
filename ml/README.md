@@ -1,94 +1,56 @@
-# Legal Metrology Compliance Checker - ML Module
+# ML Service - Crop & Preprocess
 
-Standalone ML module for OCR extraction and field detection from product images.
+This service crops scanned product images to essential label sections.
+The backend calls this service, then runs OCR + compliance check on the
+cropped image(s).
 
-## Status
+## Current Status
 
-🚧 **PLACEHOLDER** - This module is ready for ML team to implement.
+`/preprocess` returns the original image unchanged (pass-through).
+The pipeline works end-to-end; no cropping is applied yet.
 
-## Goals
+## ML Team: How to integrate
 
-1. **OCR Text Extraction** - Extract all text from product images
-2. **Field Detection** - Identify mandatory declaration fields
-3. **Font Analysis** - Check font size and readability
-4. **Label Detection** - Locate label positions on packaging
+1. Build a **Jupyter notebook** that takes a scanned product image and
+   returns cropped essential-section images (manufacturer block, MRP block,
+   dates block, etc).
+2. Export your cropping logic/model as a Python module, e.g. `crop_model.py`.
+3. Wire it into `app.py` `/preprocess`:
 
-## Tech Stack (Planned)
-
-- **OCR:** Tesseract / EasyOCR / PaddleOCR
-- **Detection:** YOLO / Detectron2
-- **Classification:** Custom CNN / ViT
-- **Framework:** PyTorch / TensorFlow
-
-## Setup
-
-```bash
-# Create virtual environment
-python -m venv venv
-source venv/bin/activate
-
-# Install dependencies (add when ready)
-pip install -r requirements.txt
-```
-
-## Project Structure
-
-```
-ml/
-├── models/               # Trained model files (.h5, .pt, .pkl)
-├── data/                 # Training data and datasets
-├── notebooks/            # Jupyter notebooks for experiments
-├── scripts/              # Training and inference scripts
-│   ├── train.py          # Model training script
-│   ├── inference.py      # Inference script
-│   └── preprocess.py     # Data preprocessing
-├── ocr_engine.py         # OCR service implementation
-├── field_detector.py     # Field detection module
-├── font_analyzer.py      # Font size analysis
-├── requirements.txt
-└── README.md
-```
-
-## Integration with Backend
-
-The backend's `ocr_service.py` is the integration point. 
-
-### Option A: REST API
 ```python
-# In backend/app/services/ocr_service.py
-import httpx
+from crop_model import crop_to_sections
 
-async def extract_fields(image_path: str) -> dict:
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "http://localhost:8001/extract",
-            files={"file": open(image_path, "rb")}
-        )
-        return response.json()
+@app.post("/preprocess")
+async def preprocess(file: UploadFile = File(...)):
+    # ... save temp file ...
+    sections = crop_to_sections(tmp_path)
+    # returns {"image": <base64 cropped>, "cropped_regions": [...]}
 ```
 
-### Option B: Direct Import
-```python
-# In backend/app/services/ocr_service.py
-import sys
-sys.path.append("../ml")
-from ocr_engine import OCREngine
+4. Keep the response contract the same so the backend doesn't change.
 
-ocr = OCREngine()
-def extract_fields(image_path: str) -> dict:
-    return ocr.extract(image_path)
+## API Contract
+
+| Method | Endpoint       | Purpose                                              |
+|--------|----------------|------------------------------------------------------|
+| GET    | /health        | Health check                                         |
+| POST   | /preprocess    | Crop image to essential sections (returns base64 image + region metadata) |
+
+## Pipeline (full flow)
+
+```
+Frontend uploads image
+  -> Backend saves & validates image
+  -> POST /preprocess (this service) -> cropped image
+  -> Backend OCR (Tesseract) on cropped image
+  -> Backend field detection (regex)
+  -> Backend compliance check (Legal Metrology Rules)
+  -> Backend returns results to frontend
 ```
 
-## API Endpoints (Planned)
+## Notebooks
 
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| POST | `/extract` | Extract text from image |
-| POST | `/detect-fields` | Detect mandatory fields |
-| POST | `/analyze-font` | Analyze font readability |
-| GET | `/health` | Health check |
-
-## Dataset Sources
-
-- [Consumer Affairs Dataset](https://consumeraffairs.gov.in/pages/legal-metrology-act)
-- Legal Metrology (Packaged Commodities) Rules, 2011
+Put your Jupyter notebooks in `notebooks/`.
+Model artifacts go in `models/`.
+Datasets go in `data/`.
+Training/preprocessing scripts go in `scripts/`.

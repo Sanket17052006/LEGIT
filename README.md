@@ -33,7 +33,7 @@ git clone https://github.com/Sanket17052006/LEGIT.git
 cd LEGIT
 
 # Run everything with one command
-docker-compose up --build
+docker compose up --build
 ```
 
 - **Frontend:** http://localhost:3000
@@ -41,7 +41,7 @@ docker-compose up --build
 - **Backend Docs:** http://localhost:8000/docs
 - **ML Service:** http://localhost:8001
 
-To stop: `docker-compose down`
+To stop: `docker compose down`
 
 ## Quick Start (Without Docker)
 

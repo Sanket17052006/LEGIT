@@ -81,6 +81,7 @@ async def upload_and_scan(
 
     # Run compliance check with extracted data
     scan_data = ScanCreate(**{k: v for k, v in extracted_fields.items() if k in ScanCreate.model_fields})
+    scan_data.raw_text = extracted_fields.get("raw_text", "")
     result = compliance_checker.check_compliance(scan_data)
 
     # Save compliance checks

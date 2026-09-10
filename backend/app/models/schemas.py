@@ -45,12 +45,12 @@ class ScanBase(BaseModel):
 
 
 class ScanCreate(ScanBase):
-    pass
+    raw_text: Optional[str] = None
 
 
 class ScanResponse(ScanBase):
     id: int
-    user_id: int
+    user_id: Optional[int] = None
     image_path: str
     compliance_status: str
     violations: Optional[str] = None

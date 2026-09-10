@@ -1,4 +1,5 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+import re
 from app.services.compliance_rules import get_all_rules, ComplianceRule
 from app.models.schemas import ScanCreate
 
@@ -47,11 +48,11 @@ class ComplianceChecker:
 
     def _check_rule(self, rule: ComplianceRule, scan_data: ScanCreate) -> Dict[str, Any]:
         """Check a single rule against scan data."""
+        raw = scan_data.raw_text or ""
         is_compliant = False
         details = ""
 
         if rule.rule_id == "LM-001":
-            # Check manufacturer/packer/importer
             if scan_data.manufacturer or scan_data.packer or scan_data.importer:
                 is_compliant = True
                 details = "Manufacturer/Packer/Importer information found"
@@ -59,7 +60,6 @@ class ComplianceChecker:
                 details = "Missing manufacturer/packer/importer information"
 
         elif rule.rule_id == "LM-002":
-            # Check net quantity
             if scan_data.net_quantity:
                 is_compliant = True
                 details = f"Net quantity declared: {scan_data.net_quantity}"
@@ -67,7 +67,6 @@ class ComplianceChecker:
                 details = "Net quantity not declared"
 
         elif rule.rule_id == "LM-003":
-            # Check MRP
             if scan_data.mrp:
                 is_compliant = True
                 details = f"MRP declared: {scan_data.mrp}"
@@ -75,7 +74,6 @@ class ComplianceChecker:
                 details = "MRP not declared"
 
         elif rule.rule_id == "LM-004":
-            # Check manufacture date
             if scan_data.manufacture_date:
                 is_compliant = True
                 details = f"Manufacture date: {scan_data.manufacture_date}"
@@ -83,7 +81,6 @@ class ComplianceChecker:
                 details = "Manufacture/packing date not mentioned"
 
         elif rule.rule_id == "LM-005":
-            # Check consumer care
             if scan_data.consumer_care:
                 is_compliant = True
                 details = f"Consumer care: {scan_data.consumer_care}"
@@ -91,7 +88,6 @@ class ComplianceChecker:
                 details = "Consumer care details not provided"
 
         elif rule.rule_id == "LM-006":
-            # Check country of origin
             if scan_data.country_of_origin:
                 is_compliant = True
                 details = f"Country of origin: {scan_data.country_of_origin}"
@@ -99,16 +95,63 @@ class ComplianceChecker:
                 details = "Country of origin not mentioned"
 
         elif rule.rule_id == "LM-007":
-            # Check expiry date (for perishable items)
             if scan_data.expiry_date:
                 is_compliant = True
                 details = f"Expiry date: {scan_data.expiry_date}"
             else:
-                details = "Expiry/best before date not mentioned (may be applicable)"
+                details = "Expiry/best before date not mentioned"
 
-        else:
-            # Default: mark as pending for rules that need ML/image analysis
-            details = f"Rule {rule.rule_id} requires image analysis (ML pending)"
+        elif rule.rule_id == "LM-008":
+            # Check MRP inclusive of all taxes - look for keyword evidence in OCR text
+            if raw:
+                tax_keywords = re.search(
+                    r"(?:inclusive|inclusiv|incl\.?)\s*(?:of\s*)?(?:all\s*)?(?:tax|gst|vat|taxes)",
+                    raw, re.IGNORECASE
+                )
+                if tax_keywords:
+                    is_compliant = True
+                    details = "MRP appears to be inclusive of taxes"
+                elif scan_data.mrp:
+                    is_compliant = True
+                    details = f"MRP declared: {scan_data.mrp} (tax inclusion assumed)"
+                else:
+                    details = "Cannot confirm MRP is inclusive of all taxes"
+            elif scan_data.mrp:
+                is_compliant = True
+                details = f"MRP declared: {scan_data.mrp} (tax inclusion assumed)"
+            else:
+                details = "Cannot confirm MRP inclusive of all taxes - MRP not found"
+
+        elif rule.rule_id == "LM-009":
+            # Check unit price declaration
+            if raw:
+                unit_price = re.search(
+                    r"(?:unit\s*price|price\s*per\s*(?:kg|g|ml|l|litre|gram|kilogram))"
+                    r"\s*[:\-\*]?\s*(.+)",
+                    raw, re.IGNORECASE
+                )
+                if unit_price:
+                    is_compliant = True
+                    details = f"Unit price declared: {unit_price.group(1).strip()}"
+                else:
+                    details = "Unit price per kg/litre not declared (warning)"
+            else:
+                details = "Unit price per kg/litre not declared (warning)"
+
+        elif rule.rule_id == "LM-010":
+            # Check vegetarian/non-vegetarian logo
+            if raw:
+                veg_match = re.search(
+                    r"(?:veg|vegetarian|non[\s\-]?veg|non[\s\-]?vegetarian|edible\s*oil|fssai)",
+                    raw, re.IGNORECASE
+                )
+                if veg_match:
+                    is_compliant = True
+                    details = "Vegetarian/Non-vegetarian marking context detected"
+                else:
+                    details = "Vegetarian/Non-vegetarian logo could not be confirmed from text"
+            else:
+                details = "Vegetarian/Non-vegetarian logo could not be confirmed from text"
 
         return {
             "rule_id": rule.rule_id,
