@@ -23,7 +23,9 @@ async def create_scan(
     current_user: User = Depends(get_current_user),
 ):
     """Create a new scan with provided product data."""
-    db_scan = Scan(**scan.model_dump(), user_id=current_user.id)
+    data = scan.model_dump()
+    data.pop("raw_text", None)
+    db_scan = Scan(**data, user_id=current_user.id)
     db.add(db_scan)
     db.commit()
     db.refresh(db_scan)
@@ -193,7 +195,7 @@ def delete_scan(
         raise HTTPException(status_code=403, detail="Not authorized to delete this scan")
 
     # Delete image file
-    if os.path.exists(db_scan.image_path):
+    if db_scan.image_path and os.path.exists(db_scan.image_path):
         os.remove(db_scan.image_path)
 
     # Delete checks
