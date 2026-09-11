@@ -2,10 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.orm import Session
 from typing import List, Optional
 from app.database import get_db
-from app.models.models import Scan, ComplianceCheck, User
+from app.models.models import Scan, ComplianceCheck, User, UserRole
 from app.models.schemas import ScanCreate, ScanResponse, ScanWithChecks, ComplianceCheckResponse
 from app.services.compliance_checker import compliance_checker
 from app.services.ocr_service import ocr_service
+from app.utils.auth import get_current_user
 from app.utils.image import allowed_file, validate_image
 from app.config import settings
 import os
@@ -18,10 +19,13 @@ router = APIRouter(prefix="/scans", tags=["scans"])
 @router.post("/", response_model=ScanResponse)
 async def create_scan(
     scan: ScanCreate,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Create a new scan with provided product data."""
-    db_scan = Scan(**scan.model_dump())
+    data = scan.model_dump()
+    data.pop("raw_text", None)
+    db_scan = Scan(**data, user_id=current_user.id)
     db.add(db_scan)
     db.commit()
     db.refresh(db_scan)
@@ -32,7 +36,8 @@ async def create_scan(
 async def upload_and_scan(
     file: UploadFile = File(...),
     product_name: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
     """Upload product image, extract fields via ML, and run compliance check."""
     if not file.filename:
@@ -63,6 +68,7 @@ async def upload_and_scan(
 
     # Create scan record with extracted data
     db_scan = Scan(
+        user_id=current_user.id,
         image_path=file_path,
         product_name=product_name or extracted_fields.get("product_name"),
         manufacturer=extracted_fields.get("manufacturer"),
@@ -117,23 +123,33 @@ def list_scans(
     skip: int = 0,
     limit: int = 100,
     status: Optional[str] = None,
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ):
-    """List all scans with optional filtering."""
+    """List scans. Users see their own; admins see all."""
     query = db.query(Scan)
+    if current_user.role != UserRole.ADMIN.value:
+        query = query.filter(Scan.user_id == current_user.id)
     if status:
         query = query.filter(Scan.compliance_status == status)
-    return query.offset(skip).limit(limit).all()
+    return query.order_by(Scan.created_at.desc()).offset(skip).limit(limit).all()
 
 
 @router.get("/stats/dashboard")
-def get_dashboard_stats(db: Session = Depends(get_db)):
-    """Get dashboard statistics."""
-    total = db.query(Scan).count()
-    compliant = db.query(Scan).filter(Scan.compliance_status == "compliant").count()
-    non_compliant = db.query(Scan).filter(Scan.compliance_status == "non_compliant").count()
-    pending = db.query(Scan).filter(Scan.compliance_status == "pending").count()
-    recent = db.query(Scan).order_by(Scan.created_at.desc()).limit(10).all()
+def get_dashboard_stats(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """Get dashboard statistics for current user (admins see all)."""
+    query = db.query(Scan)
+    if current_user.role != UserRole.ADMIN.value:
+        query = query.filter(Scan.user_id == current_user.id)
+
+    total = query.count()
+    compliant = query.filter(Scan.compliance_status == "compliant").count()
+    non_compliant = query.filter(Scan.compliance_status == "non_compliant").count()
+    pending = query.filter(Scan.compliance_status == "pending").count()
+    recent = query.order_by(Scan.created_at.desc()).limit(10).all()
 
     return {
         "total_scans": total,
@@ -145,12 +161,19 @@ def get_dashboard_stats(db: Session = Depends(get_db)):
 
 
 @router.get("/{scan_id}", response_model=ScanWithChecks)
-def get_scan(scan_id: int, db: Session = Depends(get_db)):
+def get_scan(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Get a specific scan with its compliance checks."""
     db_scan = db.query(Scan).filter(Scan.id == scan_id).first()
     if not db_scan:
         raise HTTPException(status_code=404, detail="Scan not found")
-    
+
+    if current_user.role != UserRole.ADMIN.value and db_scan.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to view this scan")
+
     checks = db.query(ComplianceCheck).filter(ComplianceCheck.scan_id == scan_id).all()
     response = ScanWithChecks.model_validate(db_scan)
     response.checks = [ComplianceCheckResponse.model_validate(c) for c in checks]
@@ -158,16 +181,23 @@ def get_scan(scan_id: int, db: Session = Depends(get_db)):
 
 
 @router.delete("/{scan_id}")
-def delete_scan(scan_id: int, db: Session = Depends(get_db)):
+def delete_scan(
+    scan_id: int,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
     """Delete a scan and its associated checks."""
     db_scan = db.query(Scan).filter(Scan.id == scan_id).first()
     if not db_scan:
         raise HTTPException(status_code=404, detail="Scan not found")
-    
+
+    if current_user.role != UserRole.ADMIN.value and db_scan.user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Not authorized to delete this scan")
+
     # Delete image file
-    if os.path.exists(db_scan.image_path):
+    if db_scan.image_path and os.path.exists(db_scan.image_path):
         os.remove(db_scan.image_path)
-    
+
     # Delete checks
     db.query(ComplianceCheck).filter(ComplianceCheck.scan_id == scan_id).delete()
     db.delete(db_scan)

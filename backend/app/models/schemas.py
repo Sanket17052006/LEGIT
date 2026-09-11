@@ -27,6 +27,11 @@ class Token(BaseModel):
     token_type: str
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 class TokenData(BaseModel):
     username: Optional[str] = None
 
@@ -51,7 +56,7 @@ class ScanCreate(ScanBase):
 class ScanResponse(ScanBase):
     id: int
     user_id: Optional[int] = None
-    image_path: str
+    image_path: Optional[str] = None
     compliance_status: str
     violations: Optional[str] = None
     notes: Optional[str] = None
